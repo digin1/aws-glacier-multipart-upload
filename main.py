@@ -5,6 +5,7 @@ import json
 import hashlib
 import math
 import shutil
+import time
 
 def sha256_hash(data):
     sha256 = hashlib.sha256()
@@ -84,15 +85,17 @@ def processchunks(file_path,description,vaultname):
     # Print the JSON data
     #print(json_output)
     upload_id = json_output['uploadId']
-    print(upload_id)
+    print(f"Task UploadId: {upload_id}")
 
-
+    start_times = []
     set_low_value = 0
     total_size = os.path.getsize(file_path)
     archive_size = total_size
 
     # Print the sorted list of files
-    for i, file_name in enumerate(sorted_files):
+    for i, file_name in enumerate(sorted_files,start=1):
+        start_time = time.time()
+
         file_size = os.path.getsize(os.path.join(directory_path, file_name))
         set_high_value = min(set_low_value + 4294967296 - 1, total_size - 1)
 
@@ -111,7 +114,9 @@ def processchunks(file_path,description,vaultname):
             '--vault-name',
             vaultname
         ]
-        print(cmd)
+        print(f"File {i}/{len(sorted_files)}. Processing: {file_name}. Bytes: {set_low_value}-{set_high_value}/{total_size}")
+        print(f"UploadId: {upload_id}. Vault: {vaultname}")
+
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         # Check for errors
@@ -124,18 +129,39 @@ def processchunks(file_path,description,vaultname):
         print(json_output)
         set_low_value = set_high_value + 1
 
+        end_time = time.time()
+        elapsed_time = end_time - start_time # in seconds
+        start_times.append(elapsed_time)
+        average_time = sum(start_times) / len(start_times)
+        remaining_files = len(sorted_files) - (i + 1)
+        eta = average_time * remaining_files
+
+        minutes, seconds = divmod(eta, 60)
+        hours, minutes = divmod(minutes, 60)
+        days, hours = divmod(hours, 24)
+        
+        # Calculate upload speed in MB/s
+        upload_speed = file_size / elapsed_time / (1024 * 1024) # convert bytes to megabytes
+
+        if days > 0:
+            eta_str = f"Estimated time remaining: {days} days, {hours} hours"
+        elif hours > 0:
+            eta_str = f"Estimated time remaining: {hours} hours, {minutes} minutes"
+        else:
+            eta_str = f"Estimated time remaining: {minutes} minutes"
+
+        print(f"ETA: {eta_str}. Time taken: {elapsed_time / 60:.2f} minutes. Upload speed: {upload_speed:.2f} MB/s.")
+
     #hashing
- 
+    print("Verifying checksum...")
     chunk_files = []
     chunk_size = 1024 * 1024
     for file in sorted_files:
         chunk_files.append(os.path.join(directory_path, file))
 
-    print(chunk_files)
-
     chunk_hashes = []
 
-    for chunk_file in chunk_files:
+    for i, chunk_file in enumerate(chunk_files, start=1):
         with open(chunk_file, 'rb') as f:
             while True:
                 data = f.read(chunk_size)
@@ -143,12 +169,13 @@ def processchunks(file_path,description,vaultname):
                     break
                 chunk_hash = sha256_hash(data)
                 chunk_hashes.append(chunk_hash)
+        print(f"Processed checksum of chunk file {i}/{len(chunk_files)}...")
+
 
     tree_hash = glacier_tree_hash(chunk_hashes)
     tree_hash_hex = tree_hash.hex()
 
     print(f'Glacier tree hash: {tree_hash_hex}')
-
 
     #complete upload
 
@@ -167,7 +194,6 @@ def processchunks(file_path,description,vaultname):
         '--vault-name',
         vaultname
     ]
-    print(finalcmd)
     result = subprocess.run(finalcmd, capture_output=True, text=True)
 
     # Check for errors
