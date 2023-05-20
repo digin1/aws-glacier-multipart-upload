@@ -95,16 +95,6 @@ def upload_part(params):
     json_output = json.loads(result.stdout)
     return json_output
 
-def process_chunk(chunk_file, chunk_size):
-    chunk_hash = []
-    with open(chunk_file, 'rb') as f:
-        while True:
-            data = f.read(chunk_size)
-            if not data:
-                break
-            chunk_hash.append(sha256_hash(data).digest())
-    return chunk_hash
-
 def processchunks(file_path, description, vaultname, sizeofchunk):
     file_name_prefix = os.path.basename(file_path)
     name, extension = os.path.splitext(file_name_prefix)
@@ -164,8 +154,17 @@ def processchunks(file_path, description, vaultname, sizeofchunk):
     for file in sorted_files:
         chunk_files.append(os.path.join(directory_path, file))
 
-    with Pool(processes=cpu_count()) as pool:
-        chunk_hashes = pool.starmap(process_chunk, [(file, chunk_size) for file in chunk_files])
+    chunk_hashes = []
+
+    for i, chunk_file in enumerate(chunk_files, start=1):
+        with open(chunk_file, 'rb') as f:
+            while True:
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                chunk_hash = sha256_hash(data)
+                chunk_hashes.append(chunk_hash)
+        print(f"Processed checksum of chunk file {i}/{len(chunk_files)}...")
 
     tree_hash = glacier_tree_hash(chunk_hashes)
     tree_hash_hex = tree_hash.hex()
