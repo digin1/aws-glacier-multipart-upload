@@ -8,7 +8,17 @@ import shutil
 import time
 from multiprocessing import Pool, cpu_count
 
-
+def convert_to_bytes(size_str):
+    size_str = size_str.lower()
+    if size_str.endswith('g'):
+        return int(size_str[:-1]) * 1024 ** 3
+    elif size_str.endswith('m'):
+        return int(size_str[:-1]) * 1024 ** 2
+    elif size_str.endswith('k'):
+        return int(size_str[:-1]) * 1024
+    else:
+        return int(size_str)
+    
 def sha256_hash(data):
     sha256 = hashlib.sha256()
     sha256.update(data)
@@ -85,8 +95,17 @@ def upload_part(params):
     json_output = json.loads(result.stdout)
     return json_output
 
+def process_chunk(chunk_file, chunk_size):
+    chunk_hash = []
+    with open(chunk_file, 'rb') as f:
+        while True:
+            data = f.read(chunk_size)
+            if not data:
+                break
+            chunk_hash.append(sha256_hash(data))
+    return chunk_hash
 
-def processchunks(file_path, description, vaultname):
+def processchunks(file_path, description, vaultname, sizeofchunk):
     file_name_prefix = os.path.basename(file_path)
     name, extension = os.path.splitext(file_name_prefix)
     temp_dir = name+'_temp'
@@ -95,7 +114,7 @@ def processchunks(file_path, description, vaultname):
         os.mkdir(os.path.join(script_dir, temp_dir))
     except:
         print(f"make dir didnt work")
-    cmd = ["split", "-b", str(4294967296), "--verbose",
+    cmd = ["split", "-b", str(sizeofchunk), "--verbose",
            file_path, os.path.join(temp_dir, "chunk")]
 
     subprocess.run(cmd, check=True)
@@ -109,7 +128,7 @@ def processchunks(file_path, description, vaultname):
         'initiate-multipart-upload',
         '--account-id', '-',
         '--archive-description', description,
-        '--part-size', '4294967296',
+        '--part-size', str(sizeofchunk),
         '--vault-name', vaultname
     ]
 
@@ -129,7 +148,7 @@ def processchunks(file_path, description, vaultname):
 
     for i, file_name in enumerate(sorted_files, start=1):
         file_size = os.path.getsize(os.path.join(directory_path, file_name))
-        set_high_value = min(set_low_value + 4294967296 - 1, total_size - 1)
+        set_high_value = min(set_low_value + sizeofchunk - 1, total_size - 1)
 
         tasks.append((i, file_name, set_low_value, set_high_value,
                      total_size, upload_id, vaultname, directory_path))
@@ -145,17 +164,8 @@ def processchunks(file_path, description, vaultname):
     for file in sorted_files:
         chunk_files.append(os.path.join(directory_path, file))
 
-    chunk_hashes = []
-
-    for i, chunk_file in enumerate(chunk_files, start=1):
-        with open(chunk_file, 'rb') as f:
-            while True:
-                data = f.read(chunk_size)
-                if not data:
-                    break
-                chunk_hash = sha256_hash(data)
-                chunk_hashes.append(chunk_hash)
-        print(f"Processed checksum of chunk file {i}/{len(chunk_files)}...")
+    with Pool(processes=cpu_count()) as pool:
+        chunk_hashes = pool.starmap(process_chunk, [(file, chunk_size) for file in chunk_files])
 
     tree_hash = glacier_tree_hash(chunk_hashes)
     tree_hash_hex = tree_hash.hex()
@@ -192,13 +202,14 @@ def processchunks(file_path, description, vaultname):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Please specify a file path, description, and vault name as arguments")
+    if len(sys.argv) < 5:
+        print("Please specify a file path, description, vault name, and chunk size as arguments")
         sys.exit(1)
 
     file_path = sys.argv[1]
     description = sys.argv[2]
     vaultname = sys.argv[3]
+    sizeofchunk = convert_to_bytes(sys.argv[4])
     main(file_path)
     size(file_path)
-    processchunks(file_path, description, vaultname)
+    processchunks(file_path, description, vaultname, sizeofchunk)
