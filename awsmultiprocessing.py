@@ -102,7 +102,7 @@ def process_chunk(chunk_file, chunk_size):
             data = f.read(chunk_size)
             if not data:
                 break
-            chunk_hash.append(sha256_hash(data))
+            chunk_hash.append(sha256_hash(data).digest())
     return chunk_hash
 
 def processchunks(file_path, description, vaultname, sizeofchunk):
